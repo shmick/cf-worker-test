@@ -2,8 +2,16 @@ interface Env {
   MY_BUCKET: R2Bucket;
 }
 
+interface CacheRequest {
+  url: string;
+}
+
 async function createShortHash(url: string): Promise<string> {
-  const urlWithoutParams = url.split('?')[0];
+  // Remove Discord's query parameters for consistent hashing
+  const urlObj = new URL(url);
+  urlObj.search = ''; // Remove all query parameters
+  const urlWithoutParams = urlObj.toString();
+  
   const msgBuffer = new TextEncoder().encode(urlWithoutParams);
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -36,72 +44,146 @@ export default {
       const url = new URL(request.url);
 
       if (request.method === 'POST' && url.pathname === '/cache') {
-        const { url: discordUrl } = await request.json() as { url: string };
-        
-        if (!discordUrl || !isDiscordUrl(discordUrl)) {
+        let body;
+        try {
+          body = await request.json() as CacheRequest;
+        } catch (e) {
           return new Response(JSON.stringify({
             status: 'error',
-            message: 'Invalid Discord URL'
+            message: 'Invalid JSON in request body'
           }), { 
             status: 400,
             headers: { 'Content-Type': 'application/json' }
           });
         }
 
-        const response = await fetch(discordUrl);
-        if (!response.ok) {
+        const { url: discordUrl } = body;
+        
+        if (!discordUrl) {
           return new Response(JSON.stringify({
             status: 'error',
-            message: 'Failed to fetch Discord image'
+            message: 'URL is required in request body'
           }), { 
-            status: response.status,
+            status: 400,
             headers: { 'Content-Type': 'application/json' }
           });
         }
 
-        const clonedResponse = response.clone();
+        if (!isDiscordUrl(discordUrl)) {
+          return new Response(JSON.stringify({
+            status: 'error',
+            message: 'Invalid Discord URL',
+            provided_url: discordUrl
+          }), { 
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
 
-        const pathParts = new URL(discordUrl).pathname.split('/');
-        const fileName = pathParts[pathParts.length - 1];
-        const fileExt = fileName.split('?')[0].split('.').pop()?.toLowerCase() || '';
+        try {
+          const response = await fetch(discordUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+          });
 
-        const shortHash = await createShortHash(discordUrl);
-
-        const date = new Date();
-        const folderName = date.getFullYear().toString() +
-          (date.getMonth() + 1).toString().padStart(2, '0') +
-          date.getDate().toString().padStart(2, '0');
-
-        const fullPath = `${folderName}/${shortHash}.${fileExt}`;
-
-        await env.MY_BUCKET.put(fullPath, clonedResponse.body, {
-          contentType: response.headers.get('content-type'),
-          httpMetadata: {
-            cacheControl: 'public, max-age=31536000'
+          if (!response.ok) {
+            return new Response(JSON.stringify({
+              status: 'error',
+              message: `Failed to fetch Discord image: ${response.status} ${response.statusText}`,
+              url: discordUrl,
+              headers: Object.fromEntries(response.headers)
+            }), { 
+              status: response.status,
+              headers: { 'Content-Type': 'application/json' }
+            });
           }
-        });
 
-        return new Response(JSON.stringify({
-          status: 'success',
-          cached_url: `https://imgcdn.ww0.ca/${fullPath}`
-        }), {
-          headers: { 'Content-Type': 'application/json' }
-        });
+          const contentType = response.headers.get('content-type');
+          if (!contentType?.startsWith('image/')) {
+            return new Response(JSON.stringify({
+              status: 'error',
+              message: 'Invalid content type',
+              content_type: contentType
+            }), { 
+              status: 400,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+
+          const clonedResponse = response.clone();
+
+          const pathParts = new URL(discordUrl).pathname.split('/');
+          const fileName = pathParts[pathParts.length - 1].split('?')[0];
+          const fileExt = fileName.split('.').pop()?.toLowerCase() || '';
+
+          if (!fileExt || !['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileExt)) {
+            return new Response(JSON.stringify({
+              status: 'error',
+              message: 'Invalid file extension',
+              extension: fileExt
+            }), { 
+              status: 400,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+
+          const shortHash = await createShortHash(discordUrl);
+          const date = new Date();
+          const folderName = date.getFullYear().toString() +
+            (date.getMonth() + 1).toString().padStart(2, '0') +
+            date.getDate().toString().padStart(2, '0');
+
+          const fullPath = `${folderName}/${shortHash}.${fileExt}`;
+
+          await env.MY_BUCKET.put(fullPath, clonedResponse.body, {
+            contentType: contentType,
+            httpMetadata: {
+              cacheControl: 'public, max-age=31536000'
+            }
+          });
+
+          return new Response(JSON.stringify({
+            status: 'success',
+            cached_url: `https://imgcdn.ww0.ca/${fullPath}`,
+            original_url: discordUrl,
+            hash: shortHash,
+            path: fullPath
+          }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+
+        } catch (error) {
+          return new Response(JSON.stringify({
+            status: 'error',
+            message: `Fetch error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            url: discordUrl
+          }), { 
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
       }
 
       if (request.method === 'GET' && url.pathname !== '/cache') {
         const obj = await env.MY_BUCKET.get(url.pathname.substring(1));
-        if (obj) {
-          const headers = new Headers();
-          headers.set('content-type', obj.httpMetadata?.contentType || 'application/octet-stream');
-          headers.set('cache-control', 'public, max-age=31536000');
-          return new Response(obj.body, { headers });
+        if (obj === null) {
+          return new Response('File not found', { 
+            status: 404,
+            headers: { 'Content-Type': 'text/plain' }
+          });
         }
-        
-        return new Response('File not found', { status: 404 });
+
+        const headers = new Headers();
+        headers.set('content-type', obj.httpMetadata?.contentType || 'application/octet-stream');
+        headers.set('cache-control', 'public, max-age=31536000');
+        return new Response(obj.body, { headers });
       }
 
-      return new Response('Not found', { status: 404 });
+      return new Response('Not found', { 
+        status: 404,
+        headers: { 'Content-Type': 'text/plain' }
+      });
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
