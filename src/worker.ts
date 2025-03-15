@@ -38,6 +38,23 @@ function isDiscordUrl(url: string): boolean {
   }
 }
 
+function getAlternativeDiscordUrl(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    if (urlObj.hostname === 'cdn.discordapp.com') {
+      urlObj.hostname = 'media.discordapp.net';
+      return urlObj.toString();
+    }
+    if (urlObj.hostname === 'media.discordapp.net') {
+      urlObj.hostname = 'cdn.discordapp.com';
+      return urlObj.toString();
+    }
+  } catch (e) {
+    return url;
+  }
+  return url;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
@@ -80,18 +97,36 @@ export default {
           });
         }
 
+        const fetchOptions = {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://discord.com/',
+            'Origin': 'https://discord.com'
+          }
+        };
+
         try {
-          const response = await fetch(discordUrl, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          let discordUrlToTry = discordUrl;
+          let response = await fetch(discordUrlToTry, fetchOptions);
+          let attemptedUrls = [discordUrlToTry];
+
+          // If first attempt fails, try alternative URL
+          if (!response.ok && response.status === 403) {
+            discordUrlToTry = getAlternativeDiscordUrl(discordUrl);
+            if (discordUrlToTry !== discordUrl) {
+              attemptedUrls.push(discordUrlToTry);
+              response = await fetch(discordUrlToTry, fetchOptions);
             }
-          });
+          }
 
           if (!response.ok) {
             return new Response(JSON.stringify({
               status: 'error',
               message: `Failed to fetch Discord image: ${response.status} ${response.statusText}`,
               url: discordUrl,
+              attempted_urls: attemptedUrls,
               headers: Object.fromEntries(response.headers)
             }), { 
               status: response.status,
@@ -113,7 +148,7 @@ export default {
 
           const clonedResponse = response.clone();
 
-          const pathParts = new URL(discordUrl).pathname.split('/');
+          const pathParts = new URL(discordUrlToTry).pathname.split('/');
           const fileName = pathParts[pathParts.length - 1].split('?')[0];
           const fileExt = fileName.split('.').pop()?.toLowerCase() || '';
 
@@ -147,6 +182,7 @@ export default {
             status: 'success',
             cached_url: `https://imgcdn.ww0.ca/${fullPath}`,
             original_url: discordUrl,
+            final_url: discordUrlToTry,
             hash: shortHash,
             path: fullPath
           }), {
