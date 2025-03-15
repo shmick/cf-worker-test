@@ -55,6 +55,40 @@ function getAlternativeDiscordUrl(url: string): string {
   return url;
 }
 
+function cleanDiscordUrl(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    // Keep only essential query parameters
+    const newSearchParams = new URLSearchParams();
+    
+    // Only keep format and quality if they exist
+    if (urlObj.searchParams.has('format')) {
+      newSearchParams.set('format', urlObj.searchParams.get('format')!);
+    }
+    if (urlObj.searchParams.has('quality')) {
+      newSearchParams.set('quality', urlObj.searchParams.get('quality')!);
+    }
+    
+    urlObj.search = newSearchParams.toString();
+    return urlObj.toString();
+  } catch (e) {
+    return url;
+  }
+}
+
+const browserHeaders = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Accept': 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Referer': 'https://discord.com/',
+  'Origin': 'https://discord.com',
+  'Sec-Fetch-Dest': 'image',
+  'Sec-Fetch-Mode': 'no-cors',
+  'Sec-Fetch-Site': 'cross-site',
+  'Pragma': 'no-cache',
+  'Cache-Control': 'no-cache'
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
@@ -97,28 +131,28 @@ export default {
           });
         }
 
-        const fetchOptions = {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://discord.com/',
-            'Origin': 'https://discord.com'
-          }
-        };
-
         try {
-          let discordUrlToTry = discordUrl;
-          let response = await fetch(discordUrlToTry, fetchOptions);
+          let discordUrlToTry = cleanDiscordUrl(discordUrl);
+          let response = await fetch(discordUrlToTry, { headers: browserHeaders });
           let attemptedUrls = [discordUrlToTry];
 
           // If first attempt fails, try alternative URL
           if (!response.ok && response.status === 403) {
-            discordUrlToTry = getAlternativeDiscordUrl(discordUrl);
-            if (discordUrlToTry !== discordUrl) {
+            const altUrl = getAlternativeDiscordUrl(discordUrlToTry);
+            if (altUrl !== discordUrlToTry) {
+              discordUrlToTry = altUrl;
               attemptedUrls.push(discordUrlToTry);
-              response = await fetch(discordUrlToTry, fetchOptions);
+              response = await fetch(discordUrlToTry, { headers: browserHeaders });
             }
+          }
+
+          // Try without any query parameters as last resort
+          if (!response.ok && response.status === 403) {
+            const urlObj = new URL(discordUrlToTry);
+            urlObj.search = '';
+            discordUrlToTry = urlObj.toString();
+            attemptedUrls.push(discordUrlToTry);
+            response = await fetch(discordUrlToTry, { headers: browserHeaders });
           }
 
           if (!response.ok) {
