@@ -1,0 +1,7 @@
+name = "img-cache"
+main = "src/worker.ts"
+compatibility_date = "2024-02-15"
+
+[[r2_buckets]]
+binding = "MY_BUCKET"
+bucket_name = "wmkdtjngresdx"
