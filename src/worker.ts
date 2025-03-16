@@ -84,8 +84,9 @@ export default {
           const response = await fetch(discordUrl, {
             method: 'GET',
             headers: {
-              'User-Agent': 'curl/8.4.0',
-              'Accept': '*/*'
+              'User-Agent': 'curl/8.7.1',
+              'Accept': '*/*',
+              'Host': 'cdn.discordapp.com'
             }
           });
 
