@@ -81,21 +81,38 @@ export default {
         }
 
         try {
+          const urlObj = new URL(discordUrl);
+          console.log('Fetching URL:', discordUrl);
+          console.log('Host:', urlObj.host);
+          
+          const requestHeaders = {
+            'User-Agent': 'curl/8.7.1',
+            'Accept': '*/*',
+            'Host': urlObj.host,
+            ':method': 'GET',
+            ':scheme': 'https',
+            ':authority': urlObj.host,
+            ':path': `${urlObj.pathname}${urlObj.search}`,
+            'Accept-Encoding': 'identity'
+          };
+
+          console.log('Request headers:', requestHeaders);
+
           const response = await fetch(discordUrl, {
             method: 'GET',
-            headers: {
-              'User-Agent': 'curl/8.7.1',
-              'Accept': '*/*',
-              'Host': 'cdn.discordapp.com'
-            }
+            headers: requestHeaders
           });
+
+          console.log('Response status:', response.status);
+          console.log('Response headers:', Object.fromEntries(response.headers));
 
           if (!response.ok) {
             return new Response(JSON.stringify({
               status: 'error',
               message: `Failed to fetch Discord image: ${response.status} ${response.statusText}`,
               url: discordUrl,
-              headers: Object.fromEntries(response.headers)
+              request_headers: requestHeaders,
+              response_headers: Object.fromEntries(response.headers)
             }), { 
               status: response.status,
               headers: { 'Content-Type': 'application/json' }
