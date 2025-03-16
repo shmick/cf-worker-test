@@ -38,6 +38,23 @@ function isDiscordUrl(url: string): boolean {
   }
 }
 
+async function fetchWithRetry(url: string, options: RequestInit, retries: number = 3): Promise<Response> {
+  for (let i = 0; i < retries; i++) {
+    const response = await fetch(url, options);
+    if (response.ok) {
+      return response;
+    }
+    if (response.status === 429) { // Rate limit
+      const retryAfter = response.headers.get('Retry-After');
+      const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    } else {
+      return response;
+    }
+  }
+  throw new Error('Failed to fetch after multiple retries');
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
@@ -82,7 +99,7 @@ export default {
 
         try {
           console.log('Attempting to fetch Discord URL:', discordUrl);
-          const response = await fetch(discordUrl, {
+          const response = await fetchWithRetry(discordUrl, {
             headers: {
               'Referer': 'https://discord.com/',
               'Origin': 'https://discord.com',
