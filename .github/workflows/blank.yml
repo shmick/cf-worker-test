@@ -1,0 +1,17 @@
+name: Manual PDF Check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check_pdf:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download PDF
+        run: |
+          while true 
+          do 
+          export URL="https://canada-first-for-a-change.s3.us-west-2.amazonaws.com/20250418_CPCPlatform_8-5x11_EN_R1-pages.pdf"
+          curl -s -o /dev/null $URL
+          echo "PDF download attempt completed."
+          done
